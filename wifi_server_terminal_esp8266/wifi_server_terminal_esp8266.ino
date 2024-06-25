@@ -42,6 +42,37 @@ void loop() {
 
 // Handle the root URL
 void handleRoot() {
+    // Scan for Wi-Fi networks
+  int numNetworks = WiFi.scanNetworks();
+  String networkList = "";
+  for (int i = 0; i < numNetworks; i++) {
+    networkList += WiFi.SSID(i);
+    networkList += " (";
+    networkList += WiFi.RSSI(i);
+    networkList += " dBm)";
+    networkList += "<br>";
+  }
+  // Get Wi-Fi signal strength (RSSI)
+  int32_t rssi = WiFi.RSSI();
+  // Get memory info
+  size_t freeHeap = ESP.getFreeHeap();
+  size_t totalSketchSize = ESP.getSketchSize();
+  size_t freeSketchSpace = ESP.getFreeSketchSpace();
+  size_t maxFreeBlockSize = ESP.getMaxFreeBlockSize();
+  size_t heapFragmentation = ESP.getHeapFragmentation();
+
+  String memoryInfo = "<p>Free heap: " + String(freeHeap) + " bytes</p>";
+  memoryInfo += "<p>Total sketch size: " + String(totalSketchSize) + " bytes</p>";
+  memoryInfo += "<p>Free sketch space: " + String(freeSketchSpace) + " bytes</p>";
+  memoryInfo += "<p>Max free block size: " + String(maxFreeBlockSize) + " bytes</p>";
+  memoryInfo += "<p>Heap fragmentation: " + String(heapFragmentation) + "%</p>";
+
+  // Graphical representation of memory info
+  String memoryGraph = "<div style='background-color: #ccc; width: 100%; height: 20px; border-radius: 10px;'>";
+  memoryGraph += "<div style='background-color: #4CAF50; width: " + String((freeHeap * 100) / 81920) + "%; height: 20px; border-radius: 10px;'></div>";
+  memoryGraph += "</div>";
+  memoryGraph += "<p>Memory Usage: " + String((freeHeap * 100) / 81920) + "%</p>";
+
   // HTML content with a terminal window
   String page = "<!DOCTYPE html><html>";
   page += "<head><meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>";
@@ -72,6 +103,12 @@ void handleRoot() {
   page += "  xhr.send();";
   page += "}";
   page += "</script>";
+  page += "<h2>Available Networks</h2>";
+  page += "<div>" + networkList + "</div>";
+  
+  page += "<h2>Memory Info</h2>";
+  page += memoryInfo;
+  page += memoryGraph;
   page += "</body></html>";
 
   server.send(200, "text/html", page);
