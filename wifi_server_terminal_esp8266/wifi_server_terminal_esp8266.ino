@@ -18,8 +18,9 @@ const char* password = "";
 // Create an instance of the server
 ESP8266WebServer server(80);
 
-// Variable to store log history
+// Variable to store log history and uptime
 String logHistory = "";
+unsigned long startMillis = millis();
 
 // Setup function
 void setup() {
@@ -41,6 +42,7 @@ void setup() {
   // Define the root URL
   server.on("/", handleRoot);
   server.on("/command", handleCommand);
+  server.on("/create_ap", handleCreateAP);
 
   // Start the server
   server.begin();
@@ -54,22 +56,16 @@ void loop() {
 
 // Handle the root URL
 void handleRoot() {
-  // HTML content with a terminal window
   String page = "<!DOCTYPE html><html>";
   page += "<head><meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>";
   page += "<title>DR.FLOWER</title>";
-  page += "<style>";
-  page += "body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f0f0; color: #333; }";
+  page += "<style>body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f0f0; color: #333; }";
   page += ".terminal { width: 80%; height: 300px; margin: 20px auto; padding: 10px; background-color: #000; color: #0F0; font-family: monospace; overflow-y: scroll; }";
-  page += "input { width: 80%; padding: 10px; font-size: 16px; }";
-  page += "</style>";
-  page += "</head>";
-  page += "<body>";
+  page += "input { width: 80%; padding: 10px; font-size: 16px; }</style></head><body>";
   page += "<h1><a href='https://edubox.ai' target='_blank'>DR.FLOWER</a></h1>";
   page += "<div class='terminal' id='terminal'></div>";
   page += "<input type='text' id='commandInput' placeholder='Enter command...'><button onclick='sendCommand()'>Send</button>";
-  page += "<script>";
-  page += "function sendCommand() {";
+  page += "<script>function sendCommand() {";
   page += "  var command = document.getElementById('commandInput').value;";
   page += "  var xhr = new XMLHttpRequest();";
   page += "  xhr.open('GET', '/command?cmd=' + encodeURIComponent(command), true);";
@@ -84,8 +80,7 @@ void handleRoot() {
   page += "  xhr.send();";
   page += "}";
   page += "window.onload = function() { sendCommand('/command?cmd=help'); };";
-  page += "</script>";
-  page += "</body></html>";
+  page += "</script></body></html>";
 
   server.send(200, "text/html", page);
 }
@@ -111,28 +106,12 @@ void handleCommand() {
     } else {
       response = "Humidity: " + String(humidity) + "%";
     }
-  } else if (cmd == "3" || cmd == "pressure") {
-    response = "Pressure sensor not implemented!";
-  } else if (cmd == "4" || cmd == "soil moisture") {
-    response = "Soil moisture sensor not implemented!";
-  } else if (cmd == "5" || cmd == "servo") {
-    response = "Servo motor control not implemented!";
-  } else if (cmd == "6" || cmd == "current usage") {
-    response = "Current usage not implemented!";
-  } else if (cmd == "7" || cmd == "cpu frequency") {
-    response = "CPU Frequency: " + String(ESP.getCpuFreqMHz()) + " MHz";
-  } else if (cmd == "8" || cmd == "memory used") {
-    response = "Memory used: " + String(ESP.getFreeHeap()) + " bytes";
-  } else if (cmd == "9" || cmd == "uptime") {
-    response = "Uptime: " + String(millis() / 1000) + " seconds";
-  } else if (cmd == "10" || cmd == "log history") {
-    response = logHistory;
-  } else if (cmd == "11" || cmd == "onboard led on") {
-    digitalWrite(LED_PIN, HIGH);
-    response = "Onboard LED turned on.";
-  } else if (cmd == "12" || cmd == "onboard led off") {
-    digitalWrite(LED_PIN, LOW);
-    response = "Onboard LED turned off.";
+  } else if (cmd == "3" || cmd == "cpu and memory") {
+    response = "Chip ID: " + String(ESP.getChipId()) + "<br>";
+    response += "CPU Frequency: " + String(ESP.getCpuFreqMHz()) + " MHz<br>";
+    response += "Free Heap Memory: " + String(ESP.getFreeHeap()) + " bytes";
+  } else if (cmd == "4" || cmd == "live time") {
+    response = "Uptime: " + String((millis() - startMillis) / 1000) + " seconds";
   } else if (cmd == "13" || cmd == "wifi networks") {
     int n = WiFi.scanNetworks();
     if (n == 0) {
@@ -140,28 +119,51 @@ void handleCommand() {
     } else {
       response = "Wi-Fi networks:<br>";
       for (int i = 0; i < n; ++i) {
-        response += String(i + 1) + ": " + WiFi.SSID(i) + " (" + String(WiFi.RSSI(i)) + " dBm)<br>";
+        response += String(i + 1) + ": SSID: " + WiFi.SSID(i) + ", RSSI: " + String(WiFi.RSSI(i)) + " dBm<br>";
       }
     }
+  } else if (cmd == "toggle LED") {
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Toggle LED state
+    response = "Onboard LED state toggled";
+  } else if (cmd == "LED on") {
+    digitalWrite(LED_PIN, LOW); // Turn LED on
+    response = "Onboard LED is now ON";
+  } else if (cmd == "LED off") {
+    digitalWrite(LED_PIN, HIGH); // Turn LED off
+    response = "Onboard LED is now OFF";
   } else if (cmd == "help") {
     response = "Available commands:<br>";
-    response += "1. temperature<br>";
-    response += "2. humidity<br>";
-    response += "3. pressure<br>";
-    response += "4. soil moisture<br>";
-    response += "5. servo<br>";
-    response += "6. current usage<br>";
-    response += "7. cpu frequency<br>";
-    response += "8. memory used<br>";
-    response += "9. uptime<br>";
-    response += "10. log history<br>";
-    response += "11. onboard led on<br>";
-    response += "12. onboard led off<br>";
-    response += "13. wifi networks<br>";
+    response += "1. temperature - Read temperature<br>";
+    response += "2. humidity - Read humidity<br>";
+    response += "3. cpu and memory - Display CPU and memory info<br>";
+    response += "4. live time - Show system uptime<br>";
+    response += "13. wifi networks - List available Wi-Fi networks<br>";
+    response += "toggle LED - Toggle onboard LED state<br>";
+    response += "LED on - Turn onboard LED on<br>";
+    response += "LED off - Turn onboard LED off<br>";
+    response += "15. create AP - Create a new access point";
   } else {
     response = "Unknown command!";
   }
 
   logHistory += response + "<br>";
   server.send(200, "text/plain", response);
+}
+
+// Handle AP creation
+void handleCreateAP() {
+  if (server.hasArg("ssid") && server.hasArg("password")) {
+    String newSSID = server.arg("ssid");
+    String newPassword = server.arg("password");
+
+    WiFi.softAP(newSSID.c_str(), newPassword.c_str());
+    server.send(200, "text/plain", "New Access Point created with SSID: " + newSSID);
+  } else {
+    String form = "<form action=\"/create_ap\" method=\"GET\">";
+    form += "SSID: <input type=\"text\" name=\"ssid\"><br>";
+    form += "Password: <input type=\"text\" name=\"password\"><br>";
+    form += "<input type=\"submit\" value=\"Create Access Point\">";
+    form += "</form>";
+    server.send(200, "text/html", form);
+  }
 }
