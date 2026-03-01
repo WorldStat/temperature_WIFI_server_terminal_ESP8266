@@ -1,169 +1,186 @@
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
 #include <DHT.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <Wire.h>
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <LittleFS.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
-// DHT sensor setup
-#define DHT_SENSOR_PIN  D7 // The ESP8266 pin D7 connected to DHT22 sensor
-#define DHT_SENSOR_TYPE DHT22
-DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
+// ========== WIFI CONFIGURATION ==========
+const char* ssid = "WIFI SSID";
+const char* password = "PASSWORD";
 
-// Onboard LED setup
-#define LED_PIN D0
+// ========== DHT CONFIGURATION ==========
+#define DHTPIN 13       // D7 on NodeMCU is GPIO 13
+#define DHTTYPE DHT22
 
-// Default Wi-Fi credentials
-const char* ssid = "Dr. Flower";
-const char* password = "";
+// ========== DISPLAY CONFIGURATION ==========
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
 
-// Create an instance of the server
+// ========== NTP CONFIGURATION ==========
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
+
+// ========== OBJECTS ==========
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 ESP8266WebServer server(80);
 
-// Variable to store log history and uptime
-String logHistory = "";
-unsigned long startMillis = millis();
+// ========== VARIABLES ==========
+unsigned long previousMillis = 0;
+const long interval = 60000; // Log data every minute
 
-// Setup function
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><title>ESP8266 Data</title>";
+  html += "<meta http-equiv=\"refresh\" content=\"60\">";
+  html += "</head><body><h1>Logged Data</h1>";
+  html += "<table border='1'><tr><th>Timestamp</th><th>Temperature (C)</th><th>Humidity (%)</th></tr>";
+  
+  File dataFile = LittleFS.open("/data.csv", "r");
+  if (dataFile) {
+    while (dataFile.available()) {
+      String line = dataFile.readStringUntil('\n');
+      String timestamp = line.substring(0, line.indexOf(','));
+      String temp = line.substring(line.indexOf(',') + 1, line.lastIndexOf(','));
+      String hum = line.substring(line.lastIndexOf(',') + 1);
+      html += "<tr><td>" + timestamp + "</td><td>" + temp + "</td><td>" + hum + "</td></tr>";
+    }
+    dataFile.close();
+  } else {
+    html += "<tr><td colspan='3'>No data logged yet.</td></tr>";
+  }
+  
+  html += "</table></body></html>";
+  server.send(200, "text/html", html);
+}
+
 void setup() {
   Serial.begin(115200);
+  dht.begin();
 
-  // Set the ESP8266 as an access point
-  WiFi.softAP(ssid, password);
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
-  Serial.println(IP);
-
-  // Initialize the DHT sensor
-  dht_sensor.begin();
-
-  // Initialize the onboard LED
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
-  // Define the root URL
-  server.on("/", handleRoot);
-  server.on("/command", handleCommand);
-  server.on("/create_ap", handleCreateAP);
-
-  // Start the server
-  server.begin();
-  Serial.println("HTTP server started");
-}
-
-// Loop function
-void loop() {
-  server.handleClient();
-}
-
-// Handle the root URL
-void handleRoot() {
-  String page = "<!DOCTYPE html><html>";
-  page += "<head><meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>";
-  page += "<title>DR.FLOWER</title>";
-  page += "<style>body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f0f0; color: #333; }";
-  page += ".terminal { width: 80%; height: 300px; margin: 20px auto; padding: 10px; background-color: #000; color: #0F0; font-family: monospace; overflow-y: scroll; }";
-  page += "input { width: 80%; padding: 10px; font-size: 16px; }</style></head><body>";
-  page += "<h1><a href='https://edubox.ai' target='_blank'>DR.FLOWER</a></h1>";
-  page += "<div class='terminal' id='terminal'></div>";
-  page += "<input type='text' id='commandInput' placeholder='Enter command...'><button onclick='sendCommand()'>Send</button>";
-  page += "<script>function sendCommand() {";
-  page += "  var command = document.getElementById('commandInput').value;";
-  page += "  var xhr = new XMLHttpRequest();";
-  page += "  xhr.open('GET', '/command?cmd=' + encodeURIComponent(command), true);";
-  page += "  xhr.onload = function () {";
-  page += "    if (xhr.status === 200) {";
-  page += "      var terminal = document.getElementById('terminal');";
-  page += "      terminal.innerHTML += '> ' + command + '<br>' + xhr.responseText + '<br>';";
-  page += "      terminal.scrollTop = terminal.scrollHeight;";
-  page += "      document.getElementById('commandInput').value = '';";
-  page += "    }";
-  page += "  };";
-  page += "  xhr.send();";
-  page += "}";
-  page += "window.onload = function() { sendCommand('/command?cmd=help'); };";
-  page += "</script></body></html>";
-
-  server.send(200, "text/html", page);
-}
-
-// Handle commands
-void handleCommand() {
-  String cmd = server.arg("cmd");
-  String response = "";
-  logHistory += "> " + cmd + "<br>";
-
-  if (cmd == "1" || cmd == "temperature") {
-    float temperature_C = dht_sensor.readTemperature();
-    float temperature_F = dht_sensor.readTemperature(true);
-    if (isnan(temperature_C) || isnan(temperature_F)) {
-      response = "Failed to read temperature!";
-    } else {
-      response = "Temperature: " + String(temperature_C) + "°C (" + String(temperature_F) + "°F)";
-    }
-  } else if (cmd == "2" || cmd == "humidity") {
-    float humidity = dht_sensor.readHumidity();
-    if (isnan(humidity)) {
-      response = "Failed to read humidity!";
-    } else {
-      response = "Humidity: " + String(humidity) + "%";
-    }
-  } else if (cmd == "3" || cmd == "cpu and memory") {
-    response = "Chip ID: " + String(ESP.getChipId()) + "<br>";
-    response += "CPU Frequency: " + String(ESP.getCpuFreqMHz()) + " MHz<br>";
-    response += "Free Heap Memory: " + String(ESP.getFreeHeap()) + " bytes";
-  } else if (cmd == "4" || cmd == "live time") {
-    response = "Uptime: " + String((millis() - startMillis) / 1000) + " seconds";
-  } else if (cmd == "13" || cmd == "wifi networks") {
-    int n = WiFi.scanNetworks();
-    if (n == 0) {
-      response = "No Wi-Fi networks found";
-    } else {
-      response = "Wi-Fi networks:<br>";
-      for (int i = 0; i < n; ++i) {
-        response += String(i + 1) + ": SSID: " + WiFi.SSID(i) + ", RSSI: " + String(WiFi.RSSI(i)) + " dBm<br>";
-      }
-    }
-  } else if (cmd == "toggle LED") {
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Toggle LED state
-    response = "Onboard LED state toggled";
-  } else if (cmd == "LED on") {
-    digitalWrite(LED_PIN, LOW); // Turn LED on
-    response = "Onboard LED is now ON";
-  } else if (cmd == "LED off") {
-    digitalWrite(LED_PIN, HIGH); // Turn LED off
-    response = "Onboard LED is now OFF";
-  } else if (cmd == "help") {
-    response = "Available commands:<br>";
-    response += "1. temperature - Read temperature<br>";
-    response += "2. humidity - Read humidity<br>";
-    response += "3. cpu and memory - Display CPU and memory info<br>";
-    response += "4. live time - Show system uptime<br>";
-    response += "13. wifi networks - List available Wi-Fi networks<br>";
-    response += "toggle LED - Toggle onboard LED state<br>";
-    response += "LED on - Turn onboard LED on<br>";
-    response += "LED off - Turn onboard LED off<br>";
-    response += "15. create AP - Create a new access point";
-  } else {
-    response = "Unknown command!";
+  if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    for(;;); 
   }
 
-  logHistory += response + "<br>";
-  server.send(200, "text/plain", response);
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.display();
+
+  // Start LittleFS
+  if(LittleFS.begin()) {
+    Serial.println("LittleFS initialized.");
+  } else {
+    Serial.println("An error has occurred while mounting LittleFS");
+  }
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Start NTP client
+  timeClient.begin();
+
+  // Start web server
+  server.on("/", handleRoot);
+  server.begin();
 }
 
-// Handle AP creation
-void handleCreateAP() {
-  if (server.hasArg("ssid") && server.hasArg("password")) {
-    String newSSID = server.arg("ssid");
-    String newPassword = server.arg("password");
+void loop() {
+  server.handleClient();
+  unsigned long currentMillis = millis();
 
-    WiFi.softAP(newSSID.c_str(), newPassword.c_str());
-    server.send(200, "text/plain", "New Access Point created with SSID: " + newSSID);
-  } else {
-    String form = "<form action=\"/create_ap\" method=\"GET\">";
-    form += "SSID: <input type=\"text\" name=\"ssid\"><br>";
-    form += "Password: <input type=\"text\" name=\"password\"><br>";
-    form += "<input type=\"submit\" value=\"Create Access Point\">";
-    form += "</form>";
-    server.send(200, "text/html", form);
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    float h = dht.readHumidity();
+    float tC = dht.readTemperature();
+    float tF = dht.readTemperature(true);
+    
+    timeClient.update();
+    unsigned long epochTime = timeClient.getEpochTime();
+    String formattedTime = timeClient.getFormattedTime();
+
+    // Log data to file
+    if (!isnan(tC) && !isnan(h)) {
+      File dataFile = LittleFS.open("/data.csv", "a");
+      if (dataFile) {
+        dataFile.print(epochTime);
+        dataFile.print(",");
+        dataFile.print(tC);
+        dataFile.print(",");
+        dataFile.println(h);
+        dataFile.close();
+      } else {
+        Serial.println("Error opening data.csv for writing");
+      }
+    }
+
+    // Uptime Calculation
+    unsigned long totalSecs = millis() / 1000;
+    int d = totalSecs / 86400;
+    int h_up = (totalSecs % 86400) / 3600;
+    int m = (totalSecs % 3600) / 60;
+    
+    display.clearDisplay();
+
+    // --- ROW 1: TEMPERATURE ---
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print(F("TEMPERATURE"));
+    
+    display.setTextSize(2);
+    display.setCursor(0, 10);
+    if (isnan(tC)) {
+      display.print(F("ERROR"));
+    } else {
+      display.printf("%.1f C", tC);
+      display.setTextSize(1);
+      display.setCursor(75, 17); // Shifted F slightly right
+      display.printf("%0.1f F", tF);
+    }
+
+    // --- ROW 2: HUMIDITY & STATUS ICON ---
+    display.setTextSize(1);
+    display.setCursor(0, 30);
+    display.print(F("HUMIDITY"));
+    
+    display.setTextSize(2);
+    display.setCursor(0, 40);
+    if (isnan(h)) {
+      display.print(F("ERROR"));
+    } else {
+      display.printf("%.0f%%", h); // Rounded for space
+      
+      // STATUS LOGIC
+      // Ideal: 18C-26C and 40%-60% Humidity
+      display.setCursor(65, 40);
+      if (tC >= 18.0 && tC <= 26.0 && h >= 40.0 && h <= 60.0) {
+        display.print(F("[ OK ]"));
+      } else if (tC > 26.0 || h > 60.0) {
+        display.print(F("[ HI ]")); // High temp or humidity
+      } else {
+        display.print(F("[ !! ]")); // General Warning/Cold/Dry
+      }
+    }
+
+    // --- ROW 3: UPTIME & IP ADDRESS ---
+    display.drawLine(0, 56, 128, 56, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 57);
+    display.print(WiFi.localIP());
+
+    display.display();
   }
 }
